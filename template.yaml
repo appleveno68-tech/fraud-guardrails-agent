@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Fraud & Guardrails Agent - hackathon deployment
+
+Parameters:
+  VerificationPhoneNumber:
+    Type: String
+    NoEcho: true
+    Description: Verified SNS phone number in E.164 format
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+    MemorySize: 512
+    Environment:
+      Variables:
+        AUDIT_TABLE: !Ref AuditTable
+        BEDROCK_MODEL_ID: amazon.nova-lite-v1:0
+        VERIFICATION_PHONE_NUMBER: !Ref VerificationPhoneNumber
+
+Resources:
+  FraudApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors: "'*'"
+
+  FraudFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_function.handler
+      CodeUri: .
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - sns:Publish
+              Resource: '*'
+      Events:
+        Intervene:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FraudApi
+            Path: /intervene
+            Method: post
+        Verify:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FraudApi
+            Path: /verify
+            Method: post
+        Confirm:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FraudApi
+            Path: /verify/confirm
+            Method: post
+        Audit:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FraudApi
+            Path: /audit
+            Method: get
+
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+Outputs:
+  ApiUrl:
+    Description: Public API Gateway URL
+    Value: !Sub https://${FraudApi}.execute-api.${AWS::Region}.amazonaws.com/prod
